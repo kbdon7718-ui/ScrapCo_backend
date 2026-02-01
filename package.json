@@ -1,0 +1,21 @@
+{
+  "name": "scrapco-backend",
+  "version": "1.0.0",
+  "description": "Simple Express backend for ScrapCo (in-memory store, learning/MVP).",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.56.0",
+    "node-fetch": "^2.6.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
+}
