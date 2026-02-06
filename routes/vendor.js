@@ -44,26 +44,80 @@ router.post('/accept', async (req, res) => {
 // Vendor backend posts its latest location and endpoint info.
 // NOTE: This endpoint is intentionally unauthenticated for now (write-only presence updates).
 router.post('/location', async (req, res) => {
-  const { vendor_id, vendorId, vendorRef, latitude, longitude, offer_url, offerUrl } = req.body || {};
+  const body = req.body || {};
+  const { vendor_id, vendorId, vendorRef } = body;
   const incomingVendorId = vendor_id || vendorId || vendorRef;
 
   if (!incomingVendorId) return res.status(400).json({ success: false, error: 'vendor_id is required' });
-  if (typeof latitude !== 'number' || typeof longitude !== 'number') {
-    return res.status(400).json({ success: false, error: 'latitude and longitude must be numbers' });
+
+  const latitudeRaw = body.latitude;
+  const longitudeRaw = body.longitude;
+  const latitudeNum = typeof latitudeRaw === 'string' ? Number.parseFloat(latitudeRaw) : latitudeRaw;
+  const longitudeNum = typeof longitudeRaw === 'string' ? Number.parseFloat(longitudeRaw) : longitudeRaw;
+
+  if (!Number.isFinite(latitudeNum) || !Number.isFinite(longitudeNum)) {
+    return res.status(400).json({ success: false, error: 'latitude and longitude must be valid numbers' });
   }
 
   try {
     const supabase = createServiceClient();
 
     const now = new Date().toISOString();
-    const offerUrlFinal = offer_url || offerUrl || null;
+
+    const offerUrlCandidate =
+      body.offer_url ??
+      body.offerUrl ??
+      body.url ??
+      body.callbackUrl ??
+      body.callback_url ??
+      null;
+    const offerUrlTrimmed = typeof offerUrlCandidate === 'string' ? offerUrlCandidate.trim() : offerUrlCandidate;
+    let offerUrlFinal = offerUrlTrimmed || null;
+
+    // vendor_backends.offer_url is NOT NULL in some DBs.
+    // If vendor doesn't send it (e.g., just periodic GPS pings), reuse the existing stored offer_url.
+    if (!offerUrlFinal) {
+      let existing;
+      let existingErr;
+
+      ({ data: existing, error: existingErr } = await supabase
+        .from('vendor_backends')
+        .select('offer_url')
+        .eq('vendor_id', String(incomingVendorId))
+        .maybeSingle());
+
+      if (
+        existingErr &&
+        /column .*vendor_id.*does not exist|42703|unknown column/i.test(existingErr.message || '')
+      ) {
+        ({ data: existing, error: existingErr } = await supabase
+          .from('vendor_backends')
+          .select('offer_url')
+          .eq('vendor_ref', String(incomingVendorId))
+          .maybeSingle());
+      }
+
+      if (existingErr) {
+        console.warn('vendor location offer_url lookup error', existingErr.message || existingErr);
+      }
+
+      offerUrlFinal = existing?.offer_url || null;
+    }
+
+    if (!offerUrlFinal) {
+      return res.status(400).json({
+        success: false,
+        error:
+          'offer_url is required on first registration (accepted keys: offer_url, offerUrl, url, callbackUrl, callback_url)',
+      });
+    }
 
     // Preferred schema:
     // vendor_backends(vendor_id text unique, latitude numeric, longitude numeric, offer_url text, updated_at)
     let preferredRow = {
       vendor_id: String(incomingVendorId),
-      latitude: latitude ?? null,
-      longitude: longitude ?? null,
+      latitude: latitudeNum,
+      longitude: longitudeNum,
       offer_url: offerUrlFinal,
       updated_at: now,
     };
@@ -72,8 +126,8 @@ router.post('/location', async (req, res) => {
     // vendor_backends(vendor_ref text unique, last_latitude numeric, last_longitude numeric, offer_url text, updated_at)
     let legacyRow = {
       vendor_ref: String(incomingVendorId),
-      last_latitude: latitude ?? null,
-      last_longitude: longitude ?? null,
+      last_latitude: latitudeNum,
+      last_longitude: longitudeNum,
       offer_url: offerUrlFinal,
       updated_at: now,
     };
