@@ -23,18 +23,22 @@ function isTerminalStatus(status) {
 }
 
 function vendorIdOf(v) {
-  return v?.vendor_id || v?.vendor_ref || v?.id || 'unknown';
+  const raw = v?.vendor_id || v?.vendor_ref || v?.id || 'unknown';
+  return raw != null ? String(raw).trim() : 'unknown';
 }
 
 function offerUrlOf(v) {
   const raw = v?.offer_url || v?.endpoint || v?.endpoint_offer_url || null;
   if (!raw) return null;
 
+  const trimmed = typeof raw === 'string' ? raw.trim() : raw;
+  if (!trimmed) return null;
+
   // Vendor Backend expects offers at POST /api/offer (SSE fanout happens there).
   // If the stored URL is already the full offer endpoint, keep it.
   // Otherwise, treat it as a base URL and force the /api/offer path.
   try {
-    const u = new URL(raw);
+    const u = new URL(trimmed);
     const normalizedPath = String(u.pathname || '').replace(/\/+$/, '');
     if (normalizedPath === '/api/offer') return u.toString();
     u.pathname = '/api/offer';
@@ -43,7 +47,7 @@ function offerUrlOf(v) {
     return u.toString();
   } catch {
     // Fall back to raw (validation will likely reject it if malformed)
-    return raw;
+    return typeof trimmed === 'string' ? trimmed : raw;
   }
 }
 

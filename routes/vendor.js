@@ -23,7 +23,8 @@ router.post('/accept', async (req, res) => {
     });
   }
 
-  const vendorRef = assignedVendorRef || vendor_id || vendorId;
+  const vendorRefRaw = assignedVendorRef || vendor_id || vendorId;
+  const vendorRef = vendorRefRaw != null ? String(vendorRefRaw).trim() : '';
   if (!vendorRef) return res.status(400).json({ success: false, error: 'vendor_id (or assignedVendorRef) is required' });
 
   try {
@@ -47,8 +48,9 @@ router.post('/location', async (req, res) => {
   const body = req.body || {};
   const { vendor_id, vendorId, vendorRef } = body;
   const incomingVendorId = vendor_id || vendorId || vendorRef;
+  const vendorIdFinal = incomingVendorId != null ? String(incomingVendorId).trim() : '';
 
-  if (!incomingVendorId) return res.status(400).json({ success: false, error: 'vendor_id is required' });
+  if (!vendorIdFinal) return res.status(400).json({ success: false, error: 'vendor_id is required' });
 
   const latitudeRaw = body.latitude;
   const longitudeRaw = body.longitude;
@@ -74,6 +76,25 @@ router.post('/location', async (req, res) => {
     const offerUrlTrimmed = typeof offerUrlCandidate === 'string' ? offerUrlCandidate.trim() : offerUrlCandidate;
     let offerUrlFinal = offerUrlTrimmed || null;
 
+    // In production, do not accept localhost URLs.
+    if (offerUrlFinal) {
+      try {
+        const u = new URL(String(offerUrlFinal));
+        const host = (u.hostname || '').toLowerCase();
+        if (
+          String(process.env.NODE_ENV || '').toLowerCase() === 'production' &&
+          (host === 'localhost' || host === '127.0.0.1' || host === '::1')
+        ) {
+          return res.status(400).json({
+            success: false,
+            error: 'offer_url must be a public URL (localhost is not reachable from production server)',
+          });
+        }
+      } catch {
+        return res.status(400).json({ success: false, error: 'offer_url must be a valid http(s) URL' });
+      }
+    }
+
     // vendor_backends.offer_url is NOT NULL in some DBs.
     // If vendor doesn't send it (e.g., just periodic GPS pings), reuse the existing stored offer_url.
     if (!offerUrlFinal) {
@@ -83,7 +104,7 @@ router.post('/location', async (req, res) => {
       ({ data: existing, error: existingErr } = await supabase
         .from('vendor_backends')
         .select('offer_url')
-        .eq('vendor_id', String(incomingVendorId))
+        .eq('vendor_id', vendorIdFinal)
         .maybeSingle());
 
       if (
@@ -93,7 +114,7 @@ router.post('/location', async (req, res) => {
         ({ data: existing, error: existingErr } = await supabase
           .from('vendor_backends')
           .select('offer_url')
-          .eq('vendor_ref', String(incomingVendorId))
+          .eq('vendor_ref', vendorIdFinal)
           .maybeSingle());
       }
 
@@ -115,7 +136,7 @@ router.post('/location', async (req, res) => {
     // Preferred schema:
     // vendor_backends(vendor_id text unique, latitude numeric, longitude numeric, offer_url text, updated_at)
     let preferredRow = {
-      vendor_id: String(incomingVendorId),
+      vendor_id: vendorIdFinal,
       latitude: latitudeNum,
       longitude: longitudeNum,
       offer_url: offerUrlFinal,
@@ -125,7 +146,7 @@ router.post('/location', async (req, res) => {
     // Back-compat schema used by existing migrations:
     // vendor_backends(vendor_ref text unique, last_latitude numeric, last_longitude numeric, offer_url text, updated_at)
     let legacyRow = {
-      vendor_ref: String(incomingVendorId),
+      vendor_ref: vendorIdFinal,
       last_latitude: latitudeNum,
       last_longitude: longitudeNum,
       offer_url: offerUrlFinal,
@@ -147,7 +168,7 @@ router.post('/location', async (req, res) => {
     }
 
     // Write-only presence: return minimal confirmation.
-    return res.json({ success: true, vendor_id: String(incomingVendorId), updated_at: data?.updated_at || now });
+    return res.json({ success: true, vendor_id: vendorIdFinal, updated_at: data?.updated_at || now });
   } catch (e) {
     console.error('Vendor location failed', e);
     return res.status(500).json({ success: false, error: 'Vendor location failed' });
@@ -170,7 +191,8 @@ router.post('/reject', async (req, res) => {
     });
   }
 
-  const vendorRef = assignedVendorRef || vendor_id || vendorId;
+  const vendorRefRaw = assignedVendorRef || vendor_id || vendorId;
+  const vendorRef = vendorRefRaw != null ? String(vendorRefRaw).trim() : '';
   if (!vendorRef) return res.status(400).json({ success: false, error: 'vendor_id (or assignedVendorRef) is required' });
 
   try {
@@ -199,7 +221,8 @@ router.post('/on-the-way', async (req, res) => {
     });
   }
 
-  const vendorRef = assignedVendorRef || vendor_id || vendorId;
+  const vendorRefRaw = assignedVendorRef || vendor_id || vendorId;
+  const vendorRef = vendorRefRaw != null ? String(vendorRefRaw).trim() : '';
   if (!vendorRef) return res.status(400).json({ success: false, error: 'vendor_id (or assignedVendorRef) is required' });
 
   try {
@@ -258,7 +281,8 @@ router.post('/pickup-done', async (req, res) => {
     });
   }
 
-  const vendorRef = assignedVendorRef || vendor_id || vendorId;
+  const vendorRefRaw = assignedVendorRef || vendor_id || vendorId;
+  const vendorRef = vendorRefRaw != null ? String(vendorRefRaw).trim() : '';
   if (!vendorRef) return res.status(400).json({ success: false, error: 'vendor_id (or assignedVendorRef) is required' });
 
   try {
