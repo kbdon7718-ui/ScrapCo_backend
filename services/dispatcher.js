@@ -26,12 +26,6 @@ function vendorIdOf(v) {
   return v?.vendor_id || v?.vendor_ref || v?.id || 'unknown';
 }
 
-function isVendorAvailable(v) {
-  if (typeof v?.is_available === 'boolean') return v.is_available;
-  if (typeof v?.active === 'boolean') return v.active;
-  return true;
-}
-
 function offerUrlOf(v) {
   const raw = v?.offer_url || v?.endpoint || v?.endpoint_offer_url || null;
   if (!raw) return null;
@@ -160,28 +154,22 @@ async function fetchPickup(supabase, pickupId) {
 
 async function fetchVendors(supabase) {
   // Expected vendor_backends table (customer DB):
-  // vendor_id, latitude, longitude, offer_url, is_available, updated_at
-  // (Older variants may use active/vendor_ref/last_latitude/last_longitude)
+  // vendor_id/vendor_ref, latitude/last_latitude, longitude/last_longitude, offer_url, updated_at
   console.log('[DISPATCH] vendor_backends_query start');
 
   let data;
   let error;
 
-  // Prefer current schema
-  ({ data, error } = await supabase.from('vendor_backends').select('*').eq('is_available', true));
-
-  // Back-compat for older schema that uses `active`
-  if (error && /column .*is_available.*does not exist/i.test(error.message || '')) {
-    console.warn('[DISPATCH] vendor_backends_query falling back to active=true (is_available column missing)');
-    ({ data, error } = await supabase.from('vendor_backends').select('*').eq('active', true));
-  }
+  // NOTE: Availability filtering intentionally removed.
+  // We dispatch to any registered vendor backend row; offline vendors will naturally timeout.
+  ({ data, error } = await supabase.from('vendor_backends').select('*').limit(500));
 
   if (error) {
     console.warn('[DISPATCH] vendor_backends_query failed:', error.message || error);
     return [];
   }
 
-  const list = (data || []).filter((v) => isVendorAvailable(v));
+  const list = Array.isArray(data) ? data : [];
   console.log(`[DISPATCH] vendor_backends_query ok count=${list.length}`);
   return list;
 }
@@ -385,9 +373,7 @@ async function tryOfferNext(pickupId) {
     }
     const offerUrl = offerUrlOf(vendor);
     console.log(
-      `[DISPATCH] vendor_selected pickupId=${pickupId} index=${state.index + 1}/${state.candidates.length} vendor_id=${vendorId} is_available=${isVendorAvailable(
-        vendor
-      )} offer_url=${offerUrl || ''}`
+      `[DISPATCH] vendor_selected pickupId=${pickupId} index=${state.index + 1}/${state.candidates.length} vendor_id=${vendorId} offer_url=${offerUrl || ''}`
     );
     try {
       // Ensure we never overwrite an active (unexpired) offer.

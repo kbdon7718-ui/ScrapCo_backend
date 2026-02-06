@@ -47,7 +47,6 @@ router.post('/accept', async (req, res) => {
           name: vendorName || null,
           phone: vendorPhone || null,
           updated_at: now,
-          is_available: true,
         };
 
         // Legacy schema
@@ -56,14 +55,13 @@ router.post('/accept', async (req, res) => {
           name: vendorName || null,
           phone: vendorPhone || null,
           updated_at: now,
-          active: true,
         };
 
         let upsertRes = await supabase.from('vendor_backends').upsert([preferredRow], { onConflict: 'vendor_id' }).select('*').maybeSingle();
 
         // Retry without phone column
         if (upsertRes.error && /column .*phone.*does not exist/i.test(upsertRes.error.message || '')) {
-          preferredRow = { vendor_id: String(vendorRef), name: vendorName || null, updated_at: now, is_available: true };
+          preferredRow = { vendor_id: String(vendorRef), name: vendorName || null, updated_at: now };
           upsertRes = await supabase.from('vendor_backends').upsert([preferredRow], { onConflict: 'vendor_id' }).select('*').maybeSingle();
         }
 
@@ -75,7 +73,7 @@ router.post('/accept', async (req, res) => {
         ) {
           let legacyRes = await supabase.from('vendor_backends').upsert([legacyRow], { onConflict: 'vendor_ref' }).select('*').maybeSingle();
           if (legacyRes.error && /column .*phone.*does not exist/i.test(legacyRes.error.message || '')) {
-            legacyRow = { vendor_ref: String(vendorRef), name: vendorName || null, updated_at: now, active: true };
+            legacyRow = { vendor_ref: String(vendorRef), name: vendorName || null, updated_at: now };
             legacyRes = await supabase.from('vendor_backends').upsert([legacyRow], { onConflict: 'vendor_ref' }).select('*').maybeSingle();
           }
         }
@@ -118,7 +116,6 @@ router.post('/location', async (req, res) => {
       latitude: latitude ?? null,
       longitude: longitude ?? null,
       offer_url: offerUrlFinal,
-      is_available: true,
       updated_at: now,
     };
 
@@ -131,7 +128,6 @@ router.post('/location', async (req, res) => {
       last_latitude: latitude ?? null,
       last_longitude: longitude ?? null,
       offer_url: offerUrlFinal,
-      active: true,
       updated_at: now,
     };
 
@@ -147,7 +143,6 @@ router.post('/location', async (req, res) => {
         latitude: latitude ?? null,
         longitude: longitude ?? null,
         offer_url: offerUrlFinal,
-        is_available: true,
         updated_at: now,
       };
       ({ data, error } = await supabase.from('vendor_backends').upsert([preferredRow], { onConflict: 'vendor_id' }).select('*').maybeSingle());
@@ -163,7 +158,6 @@ router.post('/location', async (req, res) => {
           last_latitude: latitude ?? null,
           last_longitude: longitude ?? null,
           offer_url: offerUrlFinal,
-          active: true,
           updated_at: now,
         };
         ({ data, error } = await supabase.from('vendor_backends').upsert([legacyRow], { onConflict: 'vendor_ref' }).select('*').maybeSingle());
