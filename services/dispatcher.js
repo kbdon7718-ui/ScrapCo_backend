@@ -222,7 +222,11 @@ async function sendOfferToVendor(supabase, vendor, pickup) {
   );
 
   const headers = { 'content-type': 'application/json' };
-  if (process.env.VENDOR_API_TOKEN) headers['authorization'] = `Bearer ${process.env.VENDOR_API_TOKEN}`;
+  const vendorApiToken = process.env.VENDOR_API_TOKEN;
+  // Guard against accidentally shipping placeholder tokens.
+  if (vendorApiToken && String(vendorApiToken).trim() && String(vendorApiToken).trim() !== 'change_me') {
+    headers['authorization'] = `Bearer ${String(vendorApiToken).trim()}`;
+  }
 
   const payload = JSON.stringify(body);
   console.log(`[DISPATCH] http_request_sent pickupId=${pickup.id} vendor_id=${vendorId} method=POST timeoutMs=10000 bytes=${Buffer.byteLength(payload)} url=${url}`);

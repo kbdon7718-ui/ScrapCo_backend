@@ -42,6 +42,37 @@ async function getActiveRateByType(supabase) {
   return latest;
 }
 
+// GET /api/admin/vendors
+// Diagnostic: list registered vendor backends so you can verify offer_url + updated_at.
+router.get('/vendors', async (req, res) => {
+  if (!requireAdminEnabled(req, res)) return;
+
+  try {
+    const supabase = createServiceClient();
+
+    const { data, error } = await supabase
+      .from('vendor_backends')
+      .select('*')
+      .limit(500);
+
+    if (error) return res.status(400).json({ success: false, error: error.message });
+
+    const rows = (data || []).map((v) => ({
+      vendor_id: v.vendor_id ?? null,
+      vendor_ref: v.vendor_ref ?? null,
+      offer_url: v.offer_url ?? null,
+      latitude: v.latitude ?? v.last_latitude ?? null,
+      longitude: v.longitude ?? v.last_longitude ?? null,
+      updated_at: v.updated_at ?? null,
+    }));
+
+    return res.json({ success: true, vendors: rows });
+  } catch (e) {
+    console.error('Admin vendors failed', e);
+    return res.status(500).json({ success: false, error: e?.message || 'Admin request failed' });
+  }
+});
+
 // GET /api/admin/scrap-types
 // Returns types plus current active rate if present.
 router.get('/scrap-types', async (req, res) => {

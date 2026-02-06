@@ -24,6 +24,7 @@ const dispatcher = require('./services/dispatcher');
 // Routers (EXPOSE ONLY the minimal dispatcher API surface)
 const pickupsRouter = require('./routes/pickups');
 const vendorRouter = require('./routes/vendor');
+const adminRouter = require('./routes/admin');
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
@@ -61,6 +62,9 @@ app.use('/api/pickups', pickupsRouter);
 
 // 2) Vendor callback routes (protected)
 app.use('/api/vendor', vendorRouter);
+
+// 3) Admin / diagnostics (gated inside router)
+app.use('/api/admin', adminRouter);
 
 // -----------------------------
 // ERROR HANDLING
