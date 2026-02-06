@@ -31,6 +31,7 @@ async function initDb() {
           'REQUESTED',
           'FINDING_VENDOR',
           'ASSIGNED',
+          'ON_THE_WAY',
           'COMPLETED',
           'NO_VENDOR_AVAILABLE',
           'CANCELLED'

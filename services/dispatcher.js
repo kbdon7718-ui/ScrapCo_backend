@@ -8,12 +8,18 @@ let sweeperTimer = null;
 
 function statusFindingVendor() { return 'FINDING_VENDOR'; }
 function statusAssigned() { return 'ASSIGNED'; }
+function statusOnTheWay() { return 'ON_THE_WAY'; }
 function statusNoVendorAvailable() { return 'NO_VENDOR_AVAILABLE'; }
 function statusCancelled() { return 'CANCELLED'; }
 function statusCompleted() { return 'COMPLETED'; }
 
 function isTerminalStatus(status) {
-  return status === statusAssigned() || status === statusCancelled() || status === statusCompleted();
+  return (
+    status === statusAssigned() ||
+    status === statusOnTheWay() ||
+    status === statusCancelled() ||
+    status === statusCompleted()
+  );
 }
 
 function vendorIdOf(v) {
@@ -471,7 +477,7 @@ async function handleOfferTimeout(pickupId, vendor) {
     if (!pickup) return;
 
     // If pickup already assigned, do nothing
-    if (pickup.status === statusAssigned()) {
+    if (pickup.status === statusAssigned() || pickup.status === statusOnTheWay()) {
       dispatchState.delete(pickupId);
       return;
     }

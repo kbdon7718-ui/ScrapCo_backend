@@ -21,6 +21,96 @@ const router = express.Router();
 // Dispatch service: responsible for finding vendors and sending offers
 const dispatcher = require('../services/dispatcher');
 
+function haversineDistanceKm(lat1, lon1, lat2, lon2) {
+  function toRad(v) {
+    return (v * Math.PI) / 180;
+  }
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+async function fetchVendorInfoByRef(vendorRef) {
+  if (!vendorRef) return null;
+
+  let service;
+  try {
+    service = createServiceClient();
+  } catch (e) {
+    // Service role isn't strictly required for customer status polling.
+    // If not configured, return no vendor enrichment.
+    return null;
+  }
+  const ref = String(vendorRef);
+
+  // Preferred schema uses vendor_id/latitude/longitude
+  try {
+    let { data, error } = await service.from('vendor_backends').select('vendor_id,name,phone,latitude,longitude,updated_at').eq('vendor_id', ref).maybeSingle();
+
+    if (error && /column .*phone.*does not exist/i.test(error.message || '')) {
+      ({ data, error } = await service
+        .from('vendor_backends')
+        .select('vendor_id,name,latitude,longitude,updated_at')
+        .eq('vendor_id', ref)
+        .maybeSingle());
+    }
+    if (error && /column .*vendor_id.*does not exist/i.test(error.message || '')) {
+      // fall through to legacy
+    } else if (error) {
+      console.warn('vendor_backends lookup failed', error.message || error);
+      return null;
+    } else if (data) {
+      return {
+        ref: data.vendor_id,
+        name: data.name || null,
+        phone: data.phone || null,
+        latitude: data.latitude != null ? Number(data.latitude) : null,
+        longitude: data.longitude != null ? Number(data.longitude) : null,
+        updatedAt: data.updated_at || null,
+      };
+    }
+  } catch (e) {
+    // ignore and try legacy
+  }
+
+  // Legacy schema uses vendor_ref/last_latitude/last_longitude
+  try {
+    let { data, error } = await service
+      .from('vendor_backends')
+      .select('vendor_ref,name,phone,last_latitude,last_longitude,updated_at')
+      .eq('vendor_ref', ref)
+      .maybeSingle();
+
+    if (error && /column .*phone.*does not exist/i.test(error.message || '')) {
+      ({ data, error } = await service
+        .from('vendor_backends')
+        .select('vendor_ref,name,last_latitude,last_longitude,updated_at')
+        .eq('vendor_ref', ref)
+        .maybeSingle());
+    }
+    if (error) {
+      console.warn('vendor_backends legacy lookup failed', error.message || error);
+      return null;
+    }
+    if (!data) return null;
+    return {
+      ref: data.vendor_ref,
+      name: data.name || null,
+      phone: data.phone || null,
+      latitude: data.last_latitude != null ? Number(data.last_latitude) : null,
+      longitude: data.last_longitude != null ? Number(data.last_longitude) : null,
+      updatedAt: data.updated_at || null,
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
 /**
  * Helper: Validate the incoming request body.
  * We return an error message string if invalid, or null if valid.
@@ -149,6 +239,31 @@ router.get('/:id', async (req, res) => {
     if (error) return res.status(400).json({ success: false, error: error.message });
     if (!data) return res.status(404).json({ success: false, error: 'pickup not found' });
 
+    const assignedVendorRef = data.assigned_vendor_ref || null;
+    const vendor = assignedVendorRef ? await fetchVendorInfoByRef(assignedVendorRef) : null;
+
+    let etaMinutes = null;
+    try {
+      const vLat = vendor?.latitude;
+      const vLng = vendor?.longitude;
+      const pLat = data.latitude;
+      const pLng = data.longitude;
+      if (
+        Number.isFinite(Number(vLat)) &&
+        Number.isFinite(Number(vLng)) &&
+        Number.isFinite(Number(pLat)) &&
+        Number.isFinite(Number(pLng))
+      ) {
+        // Simple ETA heuristic: assume ~20 km/h average in-city.
+        const distKm = haversineDistanceKm(Number(vLat), Number(vLng), Number(pLat), Number(pLng));
+        const minutes = (distKm / 20) * 60;
+        const bounded = Math.max(5, Math.min(180, minutes));
+        etaMinutes = Math.round(bounded);
+      }
+    } catch {
+      etaMinutes = null;
+    }
+
     return res.json({
       success: true,
       pickup: {
@@ -158,11 +273,13 @@ router.get('/:id', async (req, res) => {
         latitude: data.latitude,
         longitude: data.longitude,
         timeSlot: data.time_slot,
-        assignedVendorRef: data.assigned_vendor_ref,
+        assignedVendorRef,
         assignmentExpiresAt: data.assignment_expires_at,
         cancelledAt: data.cancelled_at,
         completedAt: data.completed_at,
         createdAt: data.created_at,
+        vendor: vendor ? { ref: vendor.ref, name: vendor.name, phone: vendor.phone, updatedAt: vendor.updatedAt } : null,
+        etaMinutes,
         items: (data.pickup_items || []).map((it) => ({
           id: it.id,
           scrapTypeId: it.scrap_type_id,
@@ -196,22 +313,32 @@ router.post('/:id/find-vendor', async (req, res) => {
     if (!owned) return res.status(404).json({ success: false, error: 'pickup not found' });
 
     const status = String(owned.status || '').toUpperCase();
-    if (status === 'ASSIGNED' || status === 'CANCELLED' || status === 'COMPLETED') {
+    if (status === 'ASSIGNED' || status === 'ON_THE_WAY' || status === 'CANCELLED' || status === 'COMPLETED') {
       return res.status(409).json({ success: false, error: `Cannot retry vendor assignment for status ${owned.status}` });
     }
 
-    const service = createServiceClient();
-    // Clear any outstanding offer and force pickup back into FINDING_VENDOR.
-    // This is safe because dispatcher acceptance is atomic/conditional.
-    await service
-      .from('pickups')
-      .update({
-        status: 'FINDING_VENDOR',
-        assigned_vendor_ref: null,
-        assignment_expires_at: null,
-        cancelled_at: null,
-      })
-      .eq('id', id);
+    // Prefer a security-definer RPC so this works without SUPABASE_SERVICE_ROLE_KEY.
+    // Falls back to service-role update if RPC isn't present.
+    try {
+      const { error: rpcErr } = await anon.rpc('find_vendor_again', { p_pickup_id: id });
+      if (rpcErr) throw rpcErr;
+    } catch (e) {
+      const msg = e?.message || String(e);
+      if (/function find_vendor_again|schema cache/i.test(msg)) {
+        const service = createServiceClient();
+        await service
+          .from('pickups')
+          .update({
+            status: 'FINDING_VENDOR',
+            assigned_vendor_ref: null,
+            assignment_expires_at: null,
+            cancelled_at: null,
+          })
+          .eq('id', id);
+      } else {
+        return res.status(400).json({ success: false, error: msg || 'Could not restart vendor dispatch' });
+      }
+    }
 
     // Cancel any in-memory timers/state for this pickup before restarting.
     try {
@@ -252,17 +379,29 @@ router.post('/:id/cancel', async (req, res) => {
       return res.status(409).json({ success: false, error: 'Completed pickups cannot be cancelled' });
     }
 
-    const service = createServiceClient();
-    const now = new Date().toISOString();
-    await service
-      .from('pickups')
-      .update({
-        status: 'CANCELLED',
-        cancelled_at: now,
-        assigned_vendor_ref: null,
-        assignment_expires_at: null,
-      })
-      .eq('id', id);
+    // Prefer a security-definer RPC so this works without SUPABASE_SERVICE_ROLE_KEY.
+    // Falls back to service-role update if RPC isn't present.
+    try {
+      const { error: rpcErr } = await anon.rpc('cancel_pickup', { p_pickup_id: id });
+      if (rpcErr) throw rpcErr;
+    } catch (e) {
+      const msg = e?.message || String(e);
+      if (/function cancel_pickup|schema cache/i.test(msg)) {
+        const service = createServiceClient();
+        const now = new Date().toISOString();
+        await service
+          .from('pickups')
+          .update({
+            status: 'CANCELLED',
+            cancelled_at: now,
+            assigned_vendor_ref: null,
+            assignment_expires_at: null,
+          })
+          .eq('id', id);
+      } else {
+        return res.status(400).json({ success: false, error: msg || 'Could not cancel pickup' });
+      }
+    }
 
     // Stop any in-memory timers/state for this pickup.
     try {
