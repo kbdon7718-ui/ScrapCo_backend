@@ -16,8 +16,6 @@ router.post('/accept', async (req, res) => {
   const body = req.body || {};
   const pickupId = body.pickupId || body.pickup_id || body.request_id || body.requestId;
   const { assignedVendorRef, vendor_id, vendorId } = body;
-  const vendorName = body.vendorName || body.name || null;
-  const vendorPhone = body.vendorPhone || body.phone || null;
   if (!pickupId) {
     return res.status(400).json({
       success: false,
@@ -35,53 +33,6 @@ router.post('/accept', async (req, res) => {
       return res.status(409).json({ success: false, error: 'Pickup not found, not assigned to this vendor, or already assigned' });
     }
 
-    // Best-effort: persist vendor contact info for customer UI.
-    if (vendorName || vendorPhone) {
-      try {
-        const supabase = createServiceClient();
-        const now = new Date().toISOString();
-
-        // Preferred schema
-        let preferredRow = {
-          vendor_id: String(vendorRef),
-          name: vendorName || null,
-          phone: vendorPhone || null,
-          updated_at: now,
-        };
-
-        // Legacy schema
-        let legacyRow = {
-          vendor_ref: String(vendorRef),
-          name: vendorName || null,
-          phone: vendorPhone || null,
-          updated_at: now,
-        };
-
-        let upsertRes = await supabase.from('vendor_backends').upsert([preferredRow], { onConflict: 'vendor_id' }).select('*').maybeSingle();
-
-        // Retry without phone column
-        if (upsertRes.error && /column .*phone.*does not exist/i.test(upsertRes.error.message || '')) {
-          preferredRow = { vendor_id: String(vendorRef), name: vendorName || null, updated_at: now };
-          upsertRes = await supabase.from('vendor_backends').upsert([preferredRow], { onConflict: 'vendor_id' }).select('*').maybeSingle();
-        }
-
-        if (
-          upsertRes.error &&
-          /column .*vendor_id.*does not exist|on conflict.*vendor_id|there is no unique or exclusion constraint/i.test(
-            upsertRes.error.message || ''
-          )
-        ) {
-          let legacyRes = await supabase.from('vendor_backends').upsert([legacyRow], { onConflict: 'vendor_ref' }).select('*').maybeSingle();
-          if (legacyRes.error && /column .*phone.*does not exist/i.test(legacyRes.error.message || '')) {
-            legacyRow = { vendor_ref: String(vendorRef), name: vendorName || null, updated_at: now };
-            legacyRes = await supabase.from('vendor_backends').upsert([legacyRow], { onConflict: 'vendor_ref' }).select('*').maybeSingle();
-          }
-        }
-      } catch (e) {
-        // ignore
-      }
-    }
-
     return res.json({ success: true, pickup: result });
   } catch (e) {
     console.error('Vendor accept failed', e);
@@ -93,7 +44,7 @@ router.post('/accept', async (req, res) => {
 // Vendor backend posts its latest location and endpoint info.
 // NOTE: This endpoint is intentionally unauthenticated for now (write-only presence updates).
 router.post('/location', async (req, res) => {
-  const { vendor_id, vendorId, vendorRef, latitude, longitude, offer_url, offerUrl, name, phone } = req.body || {};
+  const { vendor_id, vendorId, vendorRef, latitude, longitude, offer_url, offerUrl } = req.body || {};
   const incomingVendorId = vendor_id || vendorId || vendorRef;
 
   if (!incomingVendorId) return res.status(400).json({ success: false, error: 'vendor_id is required' });
@@ -108,11 +59,9 @@ router.post('/location', async (req, res) => {
     const offerUrlFinal = offer_url || offerUrl || null;
 
     // Preferred schema:
-    // vendor_backends(vendor_id text unique, latitude numeric, longitude numeric, offer_url text, is_available bool, updated_at)
+    // vendor_backends(vendor_id text unique, latitude numeric, longitude numeric, offer_url text, updated_at)
     let preferredRow = {
       vendor_id: String(incomingVendorId),
-      name: name || null,
-      phone: phone || null,
       latitude: latitude ?? null,
       longitude: longitude ?? null,
       offer_url: offerUrlFinal,
@@ -120,11 +69,9 @@ router.post('/location', async (req, res) => {
     };
 
     // Back-compat schema used by existing migrations:
-    // vendor_backends(vendor_ref text unique, last_latitude numeric, last_longitude numeric, offer_url text, active bool, updated_at)
+    // vendor_backends(vendor_ref text unique, last_latitude numeric, last_longitude numeric, offer_url text, updated_at)
     let legacyRow = {
       vendor_ref: String(incomingVendorId),
-      name: name || null,
-      phone: phone || null,
       last_latitude: latitude ?? null,
       last_longitude: longitude ?? null,
       offer_url: offerUrlFinal,
@@ -136,32 +83,8 @@ router.post('/location', async (req, res) => {
 
     ({ data, error } = await supabase.from('vendor_backends').upsert([preferredRow], { onConflict: 'vendor_id' }).select('*').maybeSingle());
 
-    if (error && /column .*phone.*does not exist/i.test(error.message || '')) {
-      preferredRow = {
-        vendor_id: String(incomingVendorId),
-        name: name || null,
-        latitude: latitude ?? null,
-        longitude: longitude ?? null,
-        offer_url: offerUrlFinal,
-        updated_at: now,
-      };
-      ({ data, error } = await supabase.from('vendor_backends').upsert([preferredRow], { onConflict: 'vendor_id' }).select('*').maybeSingle());
-    }
-
     if (error && /column .*vendor_id.*does not exist|on conflict.*vendor_id|there is no unique or exclusion constraint/i.test(error.message || '')) {
       ({ data, error } = await supabase.from('vendor_backends').upsert([legacyRow], { onConflict: 'vendor_ref' }).select('*').maybeSingle());
-
-      if (error && /column .*phone.*does not exist/i.test(error.message || '')) {
-        legacyRow = {
-          vendor_ref: String(incomingVendorId),
-          name: name || null,
-          last_latitude: latitude ?? null,
-          last_longitude: longitude ?? null,
-          offer_url: offerUrlFinal,
-          updated_at: now,
-        };
-        ({ data, error } = await supabase.from('vendor_backends').upsert([legacyRow], { onConflict: 'vendor_ref' }).select('*').maybeSingle());
-      }
     }
 
     if (error) {

@@ -48,65 +48,44 @@ async function fetchVendorInfoByRef(vendorRef) {
   }
   const ref = String(vendorRef);
 
-  // Preferred schema uses vendor_id/latitude/longitude
-  try {
-    let { data, error } = await service.from('vendor_backends').select('vendor_id,name,phone,latitude,longitude,updated_at').eq('vendor_id', ref).maybeSingle();
+  // Do NOT select explicit columns like name/phone because some Supabase schemas don't have them.
+  // Instead select '*' and map known location fields for ETA.
 
-    if (error && /column .*phone.*does not exist/i.test(error.message || '')) {
-      ({ data, error } = await service
-        .from('vendor_backends')
-        .select('vendor_id,name,latitude,longitude,updated_at')
-        .eq('vendor_id', ref)
-        .maybeSingle());
-    }
+  // Preferred schema (vendor_id, latitude, longitude)
+  try {
+    const { data, error } = await service.from('vendor_backends').select('*').eq('vendor_id', ref).maybeSingle();
     if (error && /column .*vendor_id.*does not exist/i.test(error.message || '')) {
-      // fall through to legacy
+      // fall through
     } else if (error) {
       console.warn('vendor_backends lookup failed', error.message || error);
       return null;
     } else if (data) {
       return {
-        ref: data.vendor_id,
-        name: data.name || null,
-        phone: data.phone || null,
+        ref: data.vendor_id || ref,
         latitude: data.latitude != null ? Number(data.latitude) : null,
         longitude: data.longitude != null ? Number(data.longitude) : null,
         updatedAt: data.updated_at || null,
       };
     }
-  } catch (e) {
-    // ignore and try legacy
+  } catch {
+    // ignore
   }
 
-  // Legacy schema uses vendor_ref/last_latitude/last_longitude
+  // Legacy schema (vendor_ref, last_latitude, last_longitude)
   try {
-    let { data, error } = await service
-      .from('vendor_backends')
-      .select('vendor_ref,name,phone,last_latitude,last_longitude,updated_at')
-      .eq('vendor_ref', ref)
-      .maybeSingle();
-
-    if (error && /column .*phone.*does not exist/i.test(error.message || '')) {
-      ({ data, error } = await service
-        .from('vendor_backends')
-        .select('vendor_ref,name,last_latitude,last_longitude,updated_at')
-        .eq('vendor_ref', ref)
-        .maybeSingle());
-    }
+    const { data, error } = await service.from('vendor_backends').select('*').eq('vendor_ref', ref).maybeSingle();
     if (error) {
       console.warn('vendor_backends legacy lookup failed', error.message || error);
       return null;
     }
     if (!data) return null;
     return {
-      ref: data.vendor_ref,
-      name: data.name || null,
-      phone: data.phone || null,
+      ref: data.vendor_ref || ref,
       latitude: data.last_latitude != null ? Number(data.last_latitude) : null,
       longitude: data.last_longitude != null ? Number(data.last_longitude) : null,
       updatedAt: data.updated_at || null,
     };
-  } catch (e) {
+  } catch {
     return null;
   }
 }
